@@ -27,17 +27,25 @@ sys.path.append(f1a_root)
 # Controlla se la versione principale è 3 e la secondaria è 7s
 if sys.version_info.major != 3 or sys.version_info.minor != 7:
     sys.exit(f"❌ Errore: Questo script richiede rigorosamente Python 3.7 per caricare l'.egg di CARLA 0.9.12.\n"
-             f"Attualmente stai usando Python {sys.version_info.major}.{sys.version_info.minor}.\n")
+            f"Attualmente stai usando Python {sys.version_info.major}.{sys.version_info.minor}.\n")
 
 print("🚀 SCRIPT AVVIATO CON SUCCESSO CON PYTHON 3.7!")
 
+from config.config import NUM_AGENTS
 from src.connection import connect_to_carla
-from src.environment import waypoint_locations
+from src.environment import waypoint_locations, spawn_initial_vehicles
 
 def main():
     # 1. Connessione al simulatore
     client, world = connect_to_carla()
     print("🚗 Tutto pronto!")
+
+    # 2. Spawn dei veicoli all'avvio dello script
+    vehicles = spawn_initial_vehicles(
+        world=world,
+        waypoint_locations=waypoint_locations,
+        num_agents=NUM_AGENTS
+    )
 
     try:
         while True:
