@@ -43,7 +43,7 @@ Il progetto richiede il simulatore CARLA e i file specifici del tracciato di Mon
 Apri il terminale nella cartella del progetto (`F1A`) utilizzando l'interprete **Python 3.7** e digita:
 
 ```bash
-pip install -r requirements.txt
+py -3.7 -m pip install -r requirements.txt
 ```
 
 ### 3. Come Eseguire il Progetto
