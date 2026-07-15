@@ -1,5 +1,6 @@
 # Parametri
 NUM_AGENTS = 2 # Numero di agenti (auto) nel simulatore
+DEAD_ZONE = 0.05 # Zona morta per l'angolo di sterzo (in radianti) entro la quale non viene applicata penalità
 
 # Tracciato
 WAYPOINT_FILE = "Monza.npz" # File dei waypoint del tracciato di Monza (in formato .npz)
@@ -37,3 +38,9 @@ RAY_LENGTHS = [
 STATE_DIM = 18          # 16 raggi + velocità norm + angolo norm
 ACTION_DIM = 2          # Sterzo, Acceleratore/Freno
 GLOBAL_STATE_DIM = STATE_DIM * NUM_AGENTS  # Stato globale per il Critic centralizzato
+
+# Pesi Reward
+W_PROGRESS = 250.0 # Peso del progresso lungo la pista
+W_SPEED = 0.5 # Peso della velocità
+W_DIRECTION = 5.0 # Peso della direzione (angolo di sterzo)
+W_COLLISION = 100.0 # Peso della collisione

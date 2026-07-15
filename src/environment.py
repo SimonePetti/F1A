@@ -3,6 +3,7 @@ import math
 import os
 import numpy as np
 from config.config import *
+from src.reward import RewardFunction
 
 waypoint_locations = None
 TOTAL_WAYPOINTS = 0

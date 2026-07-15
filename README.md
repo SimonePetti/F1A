@@ -44,8 +44,9 @@ F1A/
 │   ├── __init__.py
 │   ├── connection.py      # Gestione della connessione sincrona con il server CARLA
 │   ├── environment.py     # Gestione fisica dell'ambiente, spawning e raycasting geometrico
-│   ├── main.py              # Entry-point per l'avvio e la gestione del ciclo di simulazione
-│   └── models.py          # Classi PyTorch per le reti neurali Actor-Critic
+│   ├── main.py            # Entry-point per l'avvio e la gestione del ciclo di simulazione
+│   ├── models.py          # Classi PyTorch per le reti neurali Actor-Critic
+│   └── reward.py          # Calcolo della ricompensa basata su stabilità, velocità e traiettoria
 ├── .gitignore
 ├── Monza.npz              # Dataset geometrico dei waypoint del circuito
 ├── README.md

@@ -7,8 +7,8 @@ class Actor(nn.Module):
     Riceve lo stato locale (18 input) e restituisce la media e la deviazione standard
     per le azioni di guida (sterzo e acceleratore/freno).
     """
-    def init(self, state_dim=18, action_dim=2):
-        super().init()
+    def __init__(self, state_dim=18, action_dim=2):
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, 128),
             nn.ReLU(),
@@ -31,8 +31,8 @@ class Critic(nn.Module):
     Riceve lo stato unito di tutti gli agenti (36 input) e restituisce 
     una stima del valore per ciascun agente (2 output).
     """
-    def init(self, global_state_dim=36, num_agents=2):
-        super().init()
+    def __init__(self, global_state_dim=36, num_agents=2):
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(global_state_dim, 256),
             nn.ReLU(),
