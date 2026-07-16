@@ -47,6 +47,7 @@ F1A/
 │   ├── environment.py     # Gestione fisica dell'ambiente, spawning e raycasting geometrico
 │   ├── main.py            # Entry-point per l'avvio e la gestione del ciclo di simulazione
 │   ├── models.py          # Classi PyTorch per le reti neurali Actor-Critic
+│   ├── mappo.py           # Algoritmo MAPPO, calcolo del GAE e ottimizzazione reti
 │   └── reward.py          # Calcolo della ricompensa basata su stabilità, velocità e traiettoria
 ├── .gitignore
 ├── Monza.npz              # Dataset geometrico dei waypoint del circuito
