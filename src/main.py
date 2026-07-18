@@ -124,6 +124,13 @@ def main():
         states = np.array(states, dtype=np.float32)
         global_state = states.flatten()
 
+        prev_leader = None
+        COOLDOWN_OVERTAKE_STEPS = 100
+        last_overtake_step = -COOLDOWN_OVERTAKE_STEPS
+        overtakes_0 = 0
+        overtakes_1 = 0
+        steps_leading_0 = 0
+
         while True:
             # 1. Inferenza della Policy
             states_tensor = torch.from_numpy(states).float().to(device)
@@ -172,13 +179,21 @@ def main():
             rewards = []
             dones = []
             any_collision = False
+            progress_agents = [0.0] * NUM_AGENTS
 
-            # 5. Calcolo reward per ciascun agente e getione collisioni
+            # Recupero velocità e angoli fisici denormalizzati
+            speed_0 = next_states[0][16] * MAX_VELOCITY
+            speed_1 = next_states[1][16] * MAX_VELOCITY
+            angle_0 = abs(next_states[0][17] * np.pi)
+            angle_1 = abs(next_states[1][17] * np.pi)
+
+            # Estrazione dei dati spaziali
+            transforms = [v.get_transform() for v in vehicles]
+            locations = [t.location for t in transforms]
+            rotations = [t.rotation for t in transforms]
+
+            # 5. Progresso e giri completati per ciascun agente
             for i, vehicle in enumerate(vehicles):
-                # Estraiamo le metriche dallo stato successivo
-                speed_norm = next_states[i][16] # Velocità normalizzata (0-1)
-                angle_norm = next_states[i][17] # Angolo normalizzato (0-1)
-
                 # Calcolo geometrico del progresso basato sulle nuove coordinate del veicolo
                 loc = vehicle.get_transform().location
                 wp = waypoint_locations[:, :2]
@@ -201,35 +216,8 @@ def main():
 
                     progress = diff / TOTAL_WAYPOINTS
 
+                progress_agents[i] = progress
                 prev_closest_idx[i] = current_closest_idx
-
-                collision = (collision_types[i] is not None)
-                if collision:
-                    reset_reason = collision_types[i] # Salva il tipo esatto di collisione (wall_collision o car_collision)
-                    collision_types[i] = None
-                    any_collision = True
-
-                # Calcolo del reward
-                reward = reward_fn.calculate_reward(
-                    progress=progress,
-                    angle_norm=angle_norm,
-                    speed_norm=speed_norm,
-                    collision=collision,
-                    acc_brake=actions[i][1],
-                    current_steer=actions[i][0],
-                    prev_steer=prev_steer_agents[i]
-                )
-                rewards.append(reward)
-                dones.append(collision)
-
-                prev_steer_agents[i] = actions[i][0]
-
-            rewards = np.array(rewards, dtype=np.float32)
-            dones = np.array(dones, dtype=np.float32)
-
-            # Condizione di fine episodio se c'è una collisione
-            if any_collision:
-                done_episode = True
 
             # Calcoli di telemetria per il Logger
             loc_0 = vehicles[0].get_transform().location
@@ -249,11 +237,89 @@ def main():
             # True se l'agente 0 è davanti all'agente 1
             is_leading_0 = meters_agent_0 >= meters_agent_1
 
-            # Recupero velocità e angoli fisici denormalizzati
-            speed_0 = next_states[0][16] * MAX_VELOCITY
-            speed_1 = next_states[1][16] * MAX_VELOCITY
-            angle_0 = abs(next_states[0][17] * np.pi)
-            angle_1 = abs(next_states[1][17] * np.pi)
+            # Logica di sorpasso e rilevamento del leader statistico
+            lead_distance = meters_agent_0 - meters_agent_1
+            OVERTAKE_THRESHOLD_METERS = 5.5
+
+            if lead_distance > OVERTAKE_THRESHOLD_METERS:
+                statistical_leader = 0
+            elif lead_distance < -OVERTAKE_THRESHOLD_METERS:
+                statistical_leader = 1
+            else:
+                statistical_leader = prev_leader if prev_leader is not None else (0 if lead_distance >= 0 else 1)
+
+            # Inizializziamo i flag di sorpasso per questo frame
+            just_overtook_0 = False
+            just_overtook_1 = False
+
+            # Controlla se c'è stato un cambio di leadership valido
+            if prev_leader is not None and statistical_leader != prev_leader:
+                if episode_step > 50 and speed_0 > 5.0 and speed_1 > 5.0:
+                    if episode_step - last_overtake_step > COOLDOWN_OVERTAKE_STEPS:  # Evita oscillazioni rapide
+                        if statistical_leader == 0:
+                            just_overtook_0 = True
+                            overtakes_0 += 1
+                        else:
+                            just_overtook_1 = True
+                            overtakes_1 += 1
+                        last_overtake_step = episode_step
+
+            prev_leader = statistical_leader
+            if statistical_leader == 0:
+                steps_leading_0 += 1
+
+            # Calcolo reward per ciascun agente e gestione collisioni
+            for i, vehicle in enumerate(vehicles):
+                # Estraiamo le metriche dallo stato successivo
+                speed_norm = next_states[i][16] # Velocità normalizzata (0-1)
+                angle_norm = next_states[i][17] # Angolo normalizzato (0-1)
+                collision = (collision_types[i] is not None)
+
+                # Identifica i flag specifici per l'agente corrente (i)
+                is_current_agent_leader = (statistical_leader == i)
+                just_overtook_current = just_overtook_0 if i == 0 else just_overtook_1
+
+                collision = (collision_types[i] is not None)
+                if collision:
+                    reset_reason = collision_types[i] # Salva il tipo esatto di collisione (wall_collision o car_collision)
+                    collision_types[i] = None
+                    any_collision = True
+
+                # Risoluzione speculare delle variabili spaziali locali per l'agente corrente (i)
+                loc_self = locations[i]
+                rot_self = rotations[i]
+                loc_target = locations[1] if i == 0 else locations[0]
+
+                # Calcolo del reward
+                reward = reward_fn.calculate_reward(
+                    progress=progress_agents[i],
+                    angle_norm=angle_norm,
+                    speed_norm=speed_norm,
+                    collision=collision,
+                    is_leading=is_current_agent_leader,
+                    distance_between_agents=distance_between_agents,
+                    real_physical_distance=real_physical_distance,
+                    acc_brake=actions[i][1],
+                    current_steer=actions[i][0],
+                    prev_steer=prev_steer_agents[i],
+                    just_overtook=just_overtook_current,
+                    loc_0=loc_self,
+                    loc_1=loc_target,
+                    rot_0=rot_self
+                )
+
+
+                rewards.append(reward)
+                dones.append(collision)
+
+                prev_steer_agents[i] = actions[i][0]
+
+            rewards = np.array(rewards, dtype=np.float32)
+            dones = np.array(dones, dtype=np.float32)
+
+            # Condizione di fine episodio se c'è una collisione
+            if any_collision:
+                done_episode = True
 
             # Inviamo i dati allo step recorder
             logger.record_step(
@@ -293,6 +359,7 @@ def main():
                 # Salva i dati su CSV chiamando il logger
                 logger.log_episode_end(
                     laps_completed=laps_completed,
+                    overtakes=[overtakes_0, overtakes_1],
                     losses=(last_p_loss, last_v_loss),
                     reason=reset_reason
                 )
@@ -321,6 +388,11 @@ def main():
                 prev_steer_agents = [0.0] * NUM_AGENTS
                 prev_closest_idx = [None] * NUM_AGENTS
                 laps_completed = [0] * NUM_AGENTS
+                overtakes_0 = 0
+                overtakes_1 = 0
+                steps_leading_0 = 0
+                prev_leader = None
+                last_overtake_step = -COOLDOWN_OVERTAKE_STEPS
 
                 continue
 

@@ -11,7 +11,8 @@ class TrainingLogger:
         self.headers = [
             "episode_id", "step", "reward_mean", "reward_total", "episode_length",
             "avg_speed_0", "avg_speed_1", "avg_angle_0", "avg_angle_1",
-            "laps_0", "laps_1", "min_distance", "avg_distance", "pct_leader_0", "pct_leader_1",
+            "laps_0", "laps_1", "overtakes_0", "overtakes_1",
+            "min_distance", "avg_distance", "pct_leader_0", "pct_leader_1",
             "policy_loss", "value_loss", "reason"
         ]
         
@@ -81,7 +82,7 @@ class TrainingLogger:
         if is_leading_0:
             self.steps_leading_0 += 1
 
-    def log_episode_end(self, laps_completed, losses, reason):
+    def log_episode_end(self, laps_completed, overtakes, losses, reason):
         """Calcola le medie, scrive sul CSV e incrementa l'ID dell'episodio."""
         ep_mean_reward = np.mean(self.episode_stats["rewards"]) if self.episode_stats["rewards"] else 0.0
         ep_total_reward = np.sum(self.episode_stats["rewards"]) if self.episode_stats["rewards"] else 0.0
@@ -101,8 +102,8 @@ class TrainingLogger:
             writer.writerow([
                 self.episode_id, self.global_step, f"{ep_mean_reward:.4f}", f"{ep_total_reward:.2f}", self.episode_step,
                 f"{avg_speed_0:.2f}", f"{avg_speed_1:.2f}", f"{avg_angle_0:.3f}", f"{avg_angle_1:.3f}",
-                laps_completed[0], laps_completed[1], final_min_dist, f"{avg_distance:.2f}", f"{pct_leading_0:.1f}", f"{pct_leading_1:.1f}",
-                f"{policy_loss:.5f}", f"{value_loss:.5f}", reason
+                laps_completed[0], laps_completed[1], overtakes[0], overtakes[1], final_min_dist, f"{avg_distance:.2f}", 
+                f"{pct_leading_0:.1f}", f"{pct_leading_1:.1f}", f"{policy_loss:.5f}", f"{value_loss:.5f}", reason
             ])
 
         print(f"📊 Episodio {self.episode_id} loggato con successo. Reward media: {ep_mean_reward:.4f}")

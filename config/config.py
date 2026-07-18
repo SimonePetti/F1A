@@ -53,3 +53,4 @@ W_PROGRESS = 250.0 # Peso del progresso lungo la pista
 W_SPEED = 0.5 # Peso della velocità
 W_DIRECTION = 5.0 # Peso della direzione (angolo di sterzo)
 W_COLLISION = 100.0 # Peso della collisione
+W_COMPETITION = 1.0 # Peso della competizione
