@@ -34,7 +34,7 @@ if sys.version_info.major != 3 or sys.version_info.minor != 7:
 print("🚀 SCRIPT AVVIATO CON SUCCESSO CON PYTHON 3.7!")
 
 import carla
-from config.config import NUM_AGENTS, STATE_DIM, GLOBAL_STATE_DIM, ACTION_DIM, MAX_VELOCITY, ROLLOUT_STEPS, LR_ACTOR, LR_CRITIC, GAMMA, LAMBDA, CLIP_EPS, K_EPOCHS
+from config.config import MAX_VELOCITY_KMH, NUM_AGENTS, STATE_DIM, GLOBAL_STATE_DIM, ACTION_DIM, MAX_VELOCITY, ROLLOUT_STEPS, LR_ACTOR, LR_CRITIC, GAMMA, LAMBDA, CLIP_EPS, K_EPOCHS, STILL_THRESHOLD_STEPS, COOLDOWN_OVERTAKE_STEPS, OVERTAKE_THRESHOLD_METERS
 from src.connection import connect_to_carla
 from src.environment import waypoint_locations, spawn_initial_vehicles, setup_collision_sensors, get_state, reset_environment, TOTAL_WAYPOINTS, TRACK_LENGTH_METERS, track_distances_cumulative
 from src.models import Actor, Critic
@@ -114,7 +114,10 @@ def main():
     done_episode = False # Flag per indicare se l'episodio corrente è terminato (collisione o fine episodio)
     reset_reason = "max_steps" # Di default assume max_steps (verrà sovrascritta in caso di collisione)
     laps_completed = [0] * NUM_AGENTS # contatore dei giri completati per ogni agente
-    last_p_loss, last_v_loss = 0.0, 0.0 # Ultime perdite registrate per l'Actor e il Critic (per logging)
+    last_p_loss, last_v_loss = float('nan'), float('nan') # Ultime perdite registrate per l'Actor e il Critic (per logging)
+    episode_p_losses = [] # Accumulatore per calcolare la media delle loss per l'Actor sull'intero episodio (per logging)
+    episode_v_losses = [] # Accumulatore per calcolare la media delle loss per il Critic sull'intero episodio (per logging)
+    still_counter = [0] * NUM_AGENTS # Usato per rilevare se gli agenti sono fermi (o troppo lenti) per troppo tempo (per evitare stalli)
 
     try:
         # Recupero lo stato iniziale per tutti gli agenti dopo il reset di avvio
@@ -125,7 +128,6 @@ def main():
         global_state = states.flatten()
 
         prev_leader = None
-        COOLDOWN_OVERTAKE_STEPS = 100
         last_overtake_step = -COOLDOWN_OVERTAKE_STEPS
         overtakes_0 = 0
         overtakes_1 = 0
@@ -178,7 +180,6 @@ def main():
 
             rewards = []
             dones = []
-            any_collision = False
             progress_agents = [0.0] * NUM_AGENTS
 
             # Recupero velocità e angoli fisici denormalizzati
@@ -239,7 +240,6 @@ def main():
 
             # Logica di sorpasso e rilevamento del leader statistico
             lead_distance = meters_agent_0 - meters_agent_1
-            OVERTAKE_THRESHOLD_METERS = 5.5
 
             if lead_distance > OVERTAKE_THRESHOLD_METERS:
                 statistical_leader = 0
@@ -272,6 +272,7 @@ def main():
             for i, vehicle in enumerate(vehicles):
                 # Estraiamo le metriche dallo stato successivo
                 speed_norm = next_states[i][16] # Velocità normalizzata (0-1)
+                speed_kmh = speed_norm * MAX_VELOCITY_KMH
                 angle_norm = next_states[i][17] # Angolo normalizzato (0-1)
                 collision = (collision_types[i] is not None)
 
@@ -279,11 +280,26 @@ def main():
                 is_current_agent_leader = (statistical_leader == i)
                 just_overtook_current = just_overtook_0 if i == 0 else just_overtook_1
 
+                # Rilevamento se l'agente è fermo o troppo lento per troppo tempo
+                if speed_kmh < 7.0:
+                    still_counter[i] += 1
+                else:
+                    still_counter[i] = 0
+
                 collision = (collision_types[i] is not None)
-                if collision:
-                    reset_reason = collision_types[i] # Salva il tipo esatto di collisione (wall_collision o car_collision)
+
+                if episode_step > 30:
+                    if collision:
+                        reset_reason = collision_types[i]
+                        collision_types[i] = None
+                        done_episode = True
+                    elif still_counter[i] > STILL_THRESHOLD_STEPS:
+                        done_episode = True
+                        if reset_reason not in ["wall_collision", "car_collision"]:
+                            reset_reason = "still"
+                else:
+                    # Svuota i sensori durante i primi 30 passi per ripulire i micro-rimbalzi dello spawn
                     collision_types[i] = None
-                    any_collision = True
 
                 # Risoluzione speculare delle variabili spaziali locali per l'agente corrente (i)
                 loc_self = locations[i]
@@ -305,9 +321,9 @@ def main():
                     just_overtook=just_overtook_current,
                     loc_0=loc_self,
                     loc_1=loc_target,
-                    rot_0=rot_self
+                    rot_0=rot_self,
+                    episode_step=episode_step
                 )
-
 
                 rewards.append(reward)
                 dones.append(collision)
@@ -316,10 +332,6 @@ def main():
 
             rewards = np.array(rewards, dtype=np.float32)
             dones = np.array(dones, dtype=np.float32)
-
-            # Condizione di fine episodio se c'è una collisione
-            if any_collision:
-                done_episode = True
 
             # Inviamo i dati allo step recorder
             logger.record_step(
@@ -349,18 +361,24 @@ def main():
 
             # Gestione fine episodio e reset dell'ambiente
             if done_episode:
-                print(f"🚨 Episodio finito. Step episodio: {episode_step}")
+                print(f"🚨 Episodio finito. Step episodio: {episode_step}. Motivo: {reset_reason}")
 
                 # Se abbiamo accumulato abbastanza dati totali, facciamo l'update e prendiamo i dati di perdita
                 if len(buffer) >= ROLLOUT_STEPS:
                     print(f"🎯 Rollout completo ({len(buffer)} step). Ottimizzazione MAPPO...")
                     last_p_loss, last_v_loss = mappo_agent.update(buffer, global_state, device)
+                    episode_p_losses.append(last_p_loss)
+                    episode_v_losses.append(last_v_loss)
+
+                # Calcola la media delle loss dell'intero episodio
+                avg_p_loss = np.mean(episode_p_losses) if episode_p_losses else float('nan')
+                avg_v_loss = np.mean(episode_v_losses) if episode_v_losses else float('nan')
 
                 # Salva i dati su CSV chiamando il logger
                 logger.log_episode_end(
                     laps_completed=laps_completed,
                     overtakes=[overtakes_0, overtakes_1],
-                    losses=(last_p_loss, last_v_loss),
+                    losses=(avg_p_loss, avg_v_loss),
                     reason=reset_reason
                 )
 
@@ -383,16 +401,19 @@ def main():
 
                 episode_step = 0
                 done_episode = False
-                any_collision = False
                 reset_reason = "max_steps"
                 prev_steer_agents = [0.0] * NUM_AGENTS
                 prev_closest_idx = [None] * NUM_AGENTS
                 laps_completed = [0] * NUM_AGENTS
+                still_counter = [0] * NUM_AGENTS
                 overtakes_0 = 0
                 overtakes_1 = 0
                 steps_leading_0 = 0
                 prev_leader = None
                 last_overtake_step = -COOLDOWN_OVERTAKE_STEPS
+                last_p_loss, last_v_loss = float('nan'), float('nan')
+                episode_p_losses = []
+                episode_v_losses = []
 
                 continue
 
@@ -400,6 +421,8 @@ def main():
             if len(buffer) >= ROLLOUT_STEPS:
                 print(f"🎯 Rollout completo ({len(buffer)} step). Ottimizzazione MAPPO...")
                 last_p_loss, last_v_loss = mappo_agent.update(buffer, global_state, device)
+                episode_p_losses.append(last_p_loss)
+                episode_v_losses.append(last_v_loss)
 
     finally:
         # 1. Ripristiniamo la modalità asincrona per evitare che CARLA si congeli.

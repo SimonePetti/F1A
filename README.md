@@ -12,7 +12,7 @@ Ogni veicolo agisce come un agente autonomo guidato da una rete neurale locale:
 
 - **Input (Stato Locale - $18$ dimensioni)**:
   - 16 letture raycast normalizzate per il rilevamento dinamico degli ostacoli e dei limiti fisici del tracciato (con una portata differenziata da 15m a 65m).
-  - Velocità lineare dell'auto normalizzata rispetto al limite di riferimento di $v_{max} = 40.0\text{ m/s}$.
+  - Velocità lineare dell'auto normalizzata rispetto al limite di riferimento di $v_{max} = 70.0\text{ m/s}$.
   - Angolo di deviazione relativo (normalizzato nell'intervallo $[-1.0, 1.0]$) rispetto alla direzione tangente del waypoint della pista.
 - **Output (Spazio delle Azioni - $2$ dimensioni):**
   - Controllo continuo dello sterzo (intervallo $[-1.0, 1.0]$).

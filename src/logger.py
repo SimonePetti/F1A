@@ -9,11 +9,10 @@ class TrainingLogger:
         
         # Intestazione del CSV con le metriche da registrare
         self.headers = [
-            "episode_id", "step", "reward_mean", "reward_total", "episode_length",
-            "avg_speed_0", "avg_speed_1", "avg_angle_0", "avg_angle_1",
-            "laps_0", "laps_1", "overtakes_0", "overtakes_1",
-            "min_distance", "avg_distance", "pct_leader_0", "pct_leader_1",
-            "policy_loss", "value_loss", "reason"
+            "episode_id", "step", "reward_mean_0", "reward_mean_1", "reward_total_0", "reward_total_1",
+            "episode_length", "avg_speed_0", "avg_speed_1", "avg_angle_0", "avg_angle_1",
+            "laps_0", "laps_1", "overtakes_0", "overtakes_1", "min_distance", "avg_distance",
+            "pct_leader_0", "pct_leader_1", "policy_loss", "value_loss", "reason"
         ]
         
         self.episode_id = 0
@@ -49,7 +48,7 @@ class TrainingLogger:
             "speeds_0": [], "speeds_1": [],
             "angles_0": [], "angles_1": [],
             "inter_agent_distances": [],
-            "rewards": []
+            "rewards_0": [], "rewards_1": []
         }
 
     def record_step(self, speeds, angles, distance_between_agents, real_physical_distance, is_leading_0, rewards):
@@ -65,7 +64,8 @@ class TrainingLogger:
         
         # Accumula le distanze e i reward
         self.episode_stats["inter_agent_distances"].append(distance_between_agents)
-        self.episode_stats["rewards"].extend(rewards)
+        self.episode_stats["rewards_0"].append(rewards[0])
+        self.episode_stats["rewards_1"].append(rewards[1])
 
         # Calcolo della distanza minima registrata (dopo un piccolo tempo di grazia per lo spawn)
         if self.episode_step > 30:
@@ -84,8 +84,10 @@ class TrainingLogger:
 
     def log_episode_end(self, laps_completed, overtakes, losses, reason):
         """Calcola le medie, scrive sul CSV e incrementa l'ID dell'episodio."""
-        ep_mean_reward = np.mean(self.episode_stats["rewards"]) if self.episode_stats["rewards"] else 0.0
-        ep_total_reward = np.sum(self.episode_stats["rewards"]) if self.episode_stats["rewards"] else 0.0
+        mean_r0 = np.mean(self.episode_stats["rewards_0"]) if self.episode_stats["rewards_0"] else 0.0
+        total_r0 = np.sum(self.episode_stats["rewards_0"]) if self.episode_stats["rewards_0"] else 0.0
+        mean_r1 = np.mean(self.episode_stats["rewards_1"]) if self.episode_stats["rewards_1"] else 0.0
+        total_r1 = np.sum(self.episode_stats["rewards_1"]) if self.episode_stats["rewards_1"] else 0.0
         avg_speed_0 = np.mean(self.episode_stats["speeds_0"]) if self.episode_stats["speeds_0"] else 0.0
         avg_speed_1 = np.mean(self.episode_stats["speeds_1"]) if self.episode_stats["speeds_1"] else 0.0
         avg_angle_0 = np.mean(self.episode_stats["angles_0"]) if self.episode_stats["angles_0"] else 0.0
@@ -96,17 +98,19 @@ class TrainingLogger:
 
         final_min_dist = f"{self.min_distance_recorded:.2f}" if self.min_distance_recorded != 999.0 else "NaN"
         policy_loss, value_loss = losses
+        policy_str = "NaN" if (policy_loss is None or np.isnan(policy_loss)) else f"{policy_loss:.5f}"
+        value_str = "NaN" if (value_loss is None or np.isnan(value_loss)) else f"{value_loss:.5f}"
 
         with open(self.csv_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                self.episode_id, self.global_step, f"{ep_mean_reward:.4f}", f"{ep_total_reward:.2f}", self.episode_step,
-                f"{avg_speed_0:.2f}", f"{avg_speed_1:.2f}", f"{avg_angle_0:.3f}", f"{avg_angle_1:.3f}",
-                laps_completed[0], laps_completed[1], overtakes[0], overtakes[1], final_min_dist, f"{avg_distance:.2f}", 
-                f"{pct_leading_0:.1f}", f"{pct_leading_1:.1f}", f"{policy_loss:.5f}", f"{value_loss:.5f}", reason
+                self.episode_id, self.global_step, f"{mean_r0:.4f}", f"{mean_r1:.4f}", f"{total_r0:.2f}", f"{total_r1:.2f}",
+                self.episode_step, f"{avg_speed_0:.2f}", f"{avg_speed_1:.2f}", f"{avg_angle_0:.3f}", f"{avg_angle_1:.3f}",
+                laps_completed[0], laps_completed[1], overtakes[0], overtakes[1], final_min_dist, f"{avg_distance:.2f}",
+                f"{pct_leading_0:.1f}", f"{pct_leading_1:.1f}", policy_str, value_str, reason
             ])
 
-        print(f"📊 Episodio {self.episode_id} loggato con successo. Reward media: {ep_mean_reward:.4f}")
+        print(f"📊 Episodio {self.episode_id} loggato con successo. Reward media (A0/A1): {mean_r0:.4f} / {mean_r1:.4f}")
         
         self.episode_id += 1
         self.reset_episode_stats()

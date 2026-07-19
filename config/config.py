@@ -6,8 +6,12 @@ DEAD_ZONE = 0.05 # Zona morta per l'angolo di sterzo (in radianti) entro la qual
 WAYPOINT_FILE = "Monza.npz" # File dei waypoint del tracciato di Monza (in formato .npz)
 TRUE_START_INDEX = 2505 # Indice del waypoint di partenza reale (per il tracciato di Monza, questo è il punto di partenza corretto)
 
-# Configurazione fisica
-MAX_VELOCITY = 40.0  # Velocità massima di riferimento (m/s) per la normalizzazione (~144 km/h)
+# Configurazione fisica e limiti
+MAX_VELOCITY = 70.00  # Velocità massima di riferimento (m/s) per la normalizzazione (~252 km/h). Velocità massima raggiungibile da una tesla model 3 su CARLA: 71.58 m/s (257.7 km/h)
+MAX_VELOCITY_KMH = MAX_VELOCITY * 3.6  # Velocità massima in km/h
+STILL_THRESHOLD_STEPS = 100  # Numero di step consecutivi a velocità quasi nulla prima del reset per "still", 100 X 0.05 = 5 secondi
+COOLDOWN_OVERTAKE_STEPS = 100  # Numero di step di cooldown dopo un sorpasso prima di poter effettuare un nuovo sorpasso (100 X 0.05 = 5 secondi)
+OVERTAKE_THRESHOLD_METERS = 5.5 # Distanza minima tra due agenti per considerare un sorpasso valido (in metri).
 
 # Configurazione dei Raycast
 ANGLES = [
@@ -23,9 +27,9 @@ ANGLES = [
 ]
 
 RAY_LENGTHS = [
-    65,                    # 0°:
-    60, 60,                # ±10°
-    55, 55,                # ±20°
+    110,                    # 0°:
+    100, 100,              # ±10°
+    85, 85,                # ±20°
     45, 45,                # ±35°
     40, 40,                # ±50°
     35, 35,                # ±70°

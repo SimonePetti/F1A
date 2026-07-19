@@ -1,5 +1,5 @@
 import math
-from config.config import W_PROGRESS, W_DIRECTION, W_SPEED, W_COLLISION, W_COMPETITION, DEAD_ZONE
+from config.config import W_PROGRESS, W_DIRECTION, W_SPEED, W_COLLISION, W_COMPETITION, MAX_VELOCITY_KMH, DEAD_ZONE
 
 class RewardFunction:
     def __init__(self):
@@ -8,14 +8,17 @@ class RewardFunction:
         """
         pass
 
-    def calculate_reward(self, progress, angle_norm, speed_norm, collision, is_leading, distance_between_agents, real_physical_distance, 
-                         acc_brake, current_steer, prev_steer, just_overtook, loc_0, loc_1, rot_0):
+    def calculate_reward(self, progress, angle_norm, speed_norm, collision, is_leading, distance_between_agents, real_physical_distance,
+                         acc_brake, current_steer, prev_steer, just_overtook, loc_0, loc_1, rot_0, episode_step):
         """
         Calcola la ricompensa dell'agente.
         """
-        # 1. Progresso
-        # Se l'auto viaggia a meno di 25 km/h (7 m/s), non prende punti di progresso
-        if speed_norm < 0.175:
+
+        # Velocità in km/h per essere indipendenti da MAX_VELOCITY e MAX_VELOCITY_KMH nell'assegnazione dei reward
+        speed_kmh = speed_norm * MAX_VELOCITY_KMH
+
+        # 1. Progresso (Se l'auto viaggia a meno di 25 km/h, non prende punti di progresso)
+        if speed_kmh < 25.0:
             R_progress = 0.0
         else:
             R_progress = progress * W_PROGRESS
@@ -25,17 +28,20 @@ class RewardFunction:
             R_direction = 0.0
         else:
             R_direction = -abs(angle_norm) * W_DIRECTION
-        
+
         # 3. Penalità sterzo dinamica: più vai veloce, più lo zigzag è punito
         steer_delta = abs(current_steer - prev_steer)
-        if steer_delta > 0.05 and speed_norm > 0.2:
-            R_steer_penalty = -15.0 * steer_delta * speed_norm
-        else:
-            R_steer_penalty = 0.0
+
+        # Blindiamo il valore tra 0.0 e 1.0 per garantire il comportamento del filtro quadratico
+        steer_delta_clipped = min(max(steer_delta, 0.0), 1.0)
+
+        # Calcolo finale pulito
+        R_steer_penalty = -15.0 * (steer_delta_clipped ** 2) * speed_norm
 
         # 4. Velocità (Punisce solo se l'auto è ferma e non sta dando gas)
-        if speed_norm < 0.05:
-            if acc_brake > 0.3:  # Almeno il 30% di gas per azzerare il malus
+        if speed_kmh < 7.0:
+            # Almeno il 30% di gas per azzerare il malus o se siamo nei primi 30 step dell'episodio (fase di partenza)
+            if acc_brake > 0.3 or episode_step <= 30:
                 R_speed = 0.0
             else:
                 R_speed = -2.0 * W_SPEED
@@ -93,7 +99,7 @@ class RewardFunction:
                 R_competition = -3.0
             
             # I premi positivi si attivano solo se l'auto viaggia a velocità sostenuta (> 25 km/h)
-            elif speed_norm < 0.175:
+            elif speed_kmh < 25.0:
                 R_competition = 0.0
             
             else:
@@ -106,7 +112,7 @@ class RewardFunction:
                 elif not is_leading:
                     # Inseguitore attivo: velocità sostenuta (>72 km/h) per coprire le staccate,
                     # fuori dalla scia di collisione (>2.30m) e in traiettoria di attacco arretrata (d_long_abs >= 4.8m)
-                    if speed_norm > 0.5 and lateral_distance > 2.30 and d_long_abs >= 4.8 and is_geometry_coherent:
+                    if speed_kmh > 70 and lateral_distance > 2.30 and d_long_abs >= 4.8 and is_geometry_coherent:
                         R_competition = proximity_factor * 2.0
                     else:
                         # Inseguitore passivo: segue a distanza di sicurezza o in scia lontana
@@ -118,7 +124,7 @@ class RewardFunction:
         
         # Agenti distanti sulla pista (Oltre i 15 metri)
         else:
-            if is_leading and speed_norm >= 0.175:
+            if is_leading and speed_kmh >= 25:
                 R_competition = 0.5  # Bonus fuga per il leader che distanzia l'avversario
 
         R_competition *= W_COMPETITION

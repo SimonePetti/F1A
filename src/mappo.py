@@ -30,7 +30,7 @@ class MAPPO:
         
         T = rewards.shape[0]
         if T == 0:
-            return 0.0, 0.0
+            return float('nan'), float('nan')
             
         num_agents = buffer.num_agents
 
