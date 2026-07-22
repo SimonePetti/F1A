@@ -9,128 +9,96 @@ class RewardFunction:
         pass
 
     def calculate_reward(self, progress, angle_norm, speed_norm, collision, is_leading, distance_between_agents, real_physical_distance,
-                         acc_brake, current_steer, prev_steer, just_overtook, loc_0, loc_1, rot_0, episode_step):
-        """
-        Calcola la ricompensa dell'agente.
-        """
+                         current_steer, prev_steer, just_overtook, loc_0, loc_1, rot_0, episode_step):
+        """Calcola la reward dell'agente."""
 
-        # Velocità in km/h per essere indipendenti da MAX_VELOCITY e MAX_VELOCITY_KMH nell'assegnazione dei reward
         speed_kmh = speed_norm * MAX_VELOCITY_KMH
 
-        # 1. Progresso (Se l'auto viaggia a meno di 25 km/h, non prende punti di progresso)
-        if speed_kmh < 25.0:
-            R_progress = 0.0
-        else:
-            R_progress = progress * W_PROGRESS
+        # 1. Progresso lungo la pista
+        R_progress = progress * W_PROGRESS
 
-        # 2. Direzione (Penalità se l'angolo devia dalla pista)
-        if abs(angle_norm) < DEAD_ZONE:
+        # 2. Allineamento con la pista (penalità progressiva e moderata)
+        abs_angle = abs(angle_norm)
+        if abs_angle < DEAD_ZONE:
             R_direction = 0.0
         else:
-            R_direction = -abs(angle_norm) * W_DIRECTION
+            R_direction = -(abs_angle ** 2) * W_DIRECTION
 
-        # 3. Penalità sterzo dinamica: più vai veloce, più lo zigzag è punito
+        # 3. Penalità sterzo brusco a velocità elevate
         steer_delta = abs(current_steer - prev_steer)
 
         # Blindiamo il valore tra 0.0 e 1.0 per garantire il comportamento del filtro quadratico
         steer_delta_clipped = min(max(steer_delta, 0.0), 1.0)
 
-        # Calcolo finale pulito
-        R_steer_penalty = -15.0 * (steer_delta_clipped ** 2) * speed_norm
+        # Salva lo sterzo in rettilineo (straight_alignment ≈ 1.0), ma lascia sterzare in curva (straight_alignment → 0.0)
+        straight_alignment = max(0.0, 1.0 - abs(angle_norm))
 
-        # 4. Velocità (Punisce solo se l'auto è ferma e non sta dando gas)
-        if speed_kmh < 7.0:
-            # Almeno il 30% di gas per azzerare il malus o se siamo nei primi 30 step dell'episodio (fase di partenza)
-            if acc_brake > 0.3 or episode_step <= 30:
-                R_speed = 0.0
-            else:
-                R_speed = -2.0 * W_SPEED
-        else:
-            R_speed = speed_norm * W_SPEED
-        
-        # 5. Interazione e Competitività (Logica di gara)
+        # Calcolo finale pulito
+        R_steer_penalty = -0.5 * (steer_delta_clipped ** 2) * speed_norm * straight_alignment
+
+        # 4. Velocità e incentivo alla marcia
+        R_speed = speed_norm * W_SPEED
+
+        # Penalità se l'auto va troppo lenta
+        if speed_kmh < 15.0 and episode_step > 40:
+            R_speed -= 0.2
+
+        # 5. Logica di Gara e Competizione
         R_competition = 0.0
 
-        # Controllo sorpasso appena completato
         if just_overtook:
-            R_competition = 30.0  # Premio per sorpasso pulito
+            R_competition = 3.0  # Premio per il sorpasso effettuato in sicurezza
 
-        # Distanze ravvicinate lungo il tracciato
-        elif distance_between_agents < 15.0:
-            
-            # 1. Calcolo del vettore distanza globale tra le due auto (in metri)
+        elif distance_between_agents < 20.0:
             dx = loc_1.x - loc_0.x
             dy = loc_1.y - loc_0.y
-
-            # 2. Convertiamo lo yaw dell'Auto 0 da gradi a radianti per orientare il sistema
             theta = math.radians(rot_0.yaw)
 
-            # 3. PROIEZIONE LOCALE (Visto dagli occhi dell'Auto 0)
+            # Proiezione locale nel sistema di riferimento dell'auto
             d_long = dx * math.cos(theta) + dy * math.sin(theta)
             d_lat = -dx * math.sin(theta) + dy * math.cos(theta)
 
             d_long_abs = abs(d_long)
             lateral_distance = abs(d_lat)
 
-            # 4. Filtro per evitare falsi positivi di is_side_by_side / is_danger_zone quando le auto sono molto distanti ma la distanza reale è minore della distanza lungo la pista.
+            # Filtro per evitare falsi positivi di is_side_by_side / is_danger_zone quando le auto sono molto distanti ma la distanza reale è minore della distanza lungo la pista.
             if distance_between_agents > 6.0 and real_physical_distance < (distance_between_agents * 0.4):
                 is_geometry_coherent = False
             else:
                 is_geometry_coherent = True
 
-            # 5. Soglie fisiche basate sulle bounding box delle auto (4.8m x 2.2m)
+            # Soglie fisiche basate sulle bounding box delle auto (4.8m x 2.2m)
             # Sovrapposizione longitudinale delle carrozzerie lungo l'asse X locale
             has_long_overlap = d_long_abs < 4.8
-            
-            # Spazio laterale di sicurezza: la distanza tra i centri deve superare l'ingombro 
+
+            # Spazio laterale di sicurezza: la distanza tra i centri deve superare l'ingombro
             # delle due auto (1.10m + 1.10m = 2.20m) più la tolleranza minima di 10cm (Totale > 2.30m)
             has_lateral_safety = lateral_distance > 2.30
 
-            # 6. Identificazione is_side_by_side e is_danger_zone
             # Affiancamento pulito: le sagome si sovrappongono in lunghezza mantenendo il margine laterale
             is_side_by_side = has_long_overlap and has_lateral_safety and is_geometry_coherent
 
             # Zona rossa / sorpasso pericoloso: due casi principali di rischio collisione
             is_danger_zone = (d_long_abs < 7.5) and (lateral_distance <= 2.30) and is_geometry_coherent
 
-            # 7. Applicazione reward e penalità
             if is_danger_zone:
-                # Sanzione immediata a chiunque crei o subisca la situazione di pericolo.
-                R_competition = -3.0
-            
-            # I premi positivi si attivano solo se l'auto viaggia a velocità sostenuta (> 25 km/h)
-            elif speed_kmh < 25.0:
-                R_competition = 0.0
-            
-            else:
-                # Dinamiche di gara in sicurezza (Spazio laterale > 2.30m o Distanza longitudinale >= 7.5m)
-                proximity_factor = (15.0 - distance_between_agents) / 15.0
-
+                R_competition = -0.5
+            elif speed_kmh >= 20.0:
+                proximity_factor = (20.0 - distance_between_agents) / 20.0
                 if is_side_by_side:
-                    R_competition = 2.2  # Premio affiancamento pulito
-                
-                elif not is_leading:
-                    # Inseguitore attivo: velocità sostenuta (>72 km/h) per coprire le staccate,
+                    R_competition = 0.2 # Premio affiancamento pulito
+                elif not is_leading and speed_kmh > 40.0 and lateral_distance > 2.30 and d_long_abs >= 4.8:
+                    # Inseguitore attivo: velocità sostenuta (>40 km/h),
                     # fuori dalla scia di collisione (>2.30m) e in traiettoria di attacco arretrata (d_long_abs >= 4.8m)
-                    if speed_kmh > 70 and lateral_distance > 2.30 and d_long_abs >= 4.8 and is_geometry_coherent:
-                        R_competition = proximity_factor * 2.0
-                    else:
-                        # Inseguitore passivo: segue a distanza di sicurezza o in scia lontana
-                        R_competition = proximity_factor * 0.1
-                
-                else:
-                    # Leader sotto pressione: l'avversario è vicino ma a distanza di sicurezza.
-                    R_competition = 0.0
-        
-        # Agenti distanti sulla pista (Oltre i 15 metri)
+                    R_competition = proximity_factor * 0.15
         else:
-            if is_leading and speed_kmh >= 25:
-                R_competition = 0.5  # Bonus fuga per il leader che distanzia l'avversario
+            if is_leading and speed_kmh >= 50.0:
+                R_competition = 0.1 # Agenti staccati: piccolo bonus al leader se mantiene alta velocità
 
         R_competition *= W_COMPETITION
 
         # 6. Collisione
         R_collision = -W_COLLISION if collision else 0.0
 
-        # Somma per ottenere la reward totale
+        # Totale
         return float(R_progress + R_direction + R_steer_penalty + R_speed + R_competition + R_collision)

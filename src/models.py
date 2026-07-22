@@ -18,6 +18,17 @@ class Actor(nn.Module):
         self.mean = nn.Linear(128, action_dim)
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
+        # Bias iniziale sull'acceleratore (+1.5) per favorire l'avanzamento
+        with torch.no_grad():
+            self.mean.bias[1].fill_(1.5)
+
+    def forward(self, state):
+        x = self.net(state)
+        mean = self.mean(x)
+        clamped_log_std = torch.clamp(self.log_std, min=-1.6, max=0.5)
+        std = torch.exp(clamped_log_std)
+        return mean, std
+
     def forward(self, state):
         x = self.net(state)
         mean = torch.tanh(self.mean(x))

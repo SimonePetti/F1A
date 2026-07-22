@@ -34,7 +34,7 @@ if sys.version_info.major != 3 or sys.version_info.minor != 7:
 print("🚀 SCRIPT AVVIATO CON SUCCESSO CON PYTHON 3.7!")
 
 import carla
-from config.config import MAX_VELOCITY_KMH, NUM_AGENTS, STATE_DIM, GLOBAL_STATE_DIM, ACTION_DIM, MAX_VELOCITY, ROLLOUT_STEPS, LR_ACTOR, LR_CRITIC, GAMMA, LAMBDA, CLIP_EPS, K_EPOCHS, STILL_THRESHOLD_STEPS, COOLDOWN_OVERTAKE_STEPS, OVERTAKE_THRESHOLD_METERS
+from config.config import MAX_VELOCITY_KMH, NUM_AGENTS, STATE_DIM, GLOBAL_STATE_DIM, ACTION_DIM, MAX_VELOCITY, ROLLOUT_STEPS, LR_ACTOR, LR_CRITIC, GAMMA, LAMBDA, CLIP_EPS, K_EPOCHS, STILL_THRESHOLD_STEPS, MAX_STEPS_PER_EPISODE, COOLDOWN_OVERTAKE_STEPS, OVERTAKE_THRESHOLD_METERS
 from src.connection import connect_to_carla
 from src.environment import waypoint_locations, spawn_initial_vehicles, setup_collision_sensors, get_state, reset_environment, TOTAL_WAYPOINTS, TRACK_LENGTH_METERS, track_distances_cumulative
 from src.models import Actor, Critic
@@ -42,6 +42,14 @@ from src.buffer import RolloutBuffer
 from src.mappo import MAPPO
 from src.reward import RewardFunction
 from src.logger import TrainingLogger
+
+def apply_initial_velocity(vehicles, speed_kmh=50.0):
+    """ Impone una velocità iniziale immediata lungo la direzione del veicolo per sbloccare l'esplorazione """
+    speed_mps = speed_kmh / 3.6
+    for vehicle in vehicles:
+        fwd = vehicle.get_transform().get_forward_vector()
+        target_vel = carla.Vector3D(x=fwd.x * speed_mps, y=fwd.y * speed_mps, z=fwd.z * speed_mps)
+        vehicle.set_target_velocity(target_vel) # Imposta la velocità target immediatamente
 
 def main():
     # 1. Connessione al simulatore CARLA
@@ -66,6 +74,9 @@ def main():
         collision_sensors=collision_sensors,
         blueprint_library=blueprint_library
     )
+
+    # 2.1 Spinta iniziale: Applica velocità iniziale al primo avvio (stiamo sul rettilineo di partenza, quindi possiamo dare una spinta iniziale per evitare stalli)
+    apply_initial_velocity(vehicles, speed_kmh=40.0)
 
     # 3. Istanza delle reti Actor-Critic e dell'algoritmo MAPPO
     actor_net = Actor(state_dim=STATE_DIM, action_dim=ACTION_DIM).to(device)
@@ -297,6 +308,10 @@ def main():
                         done_episode = True
                         if reset_reason not in ["wall_collision", "car_collision"]:
                             reset_reason = "still"
+                    elif episode_step >= MAX_STEPS_PER_EPISODE:
+                        done_episode = True
+                        if reset_reason not in ["wall_collision", "car_collision", "still"]:
+                            reset_reason = "max_steps"
                 else:
                     # Svuota i sensori durante i primi 30 passi per ripulire i micro-rimbalzi dello spawn
                     collision_types[i] = None
@@ -315,7 +330,6 @@ def main():
                     is_leading=is_current_agent_leader,
                     distance_between_agents=distance_between_agents,
                     real_physical_distance=real_physical_distance,
-                    acc_brake=actions[i][1],
                     current_steer=actions[i][0],
                     prev_steer=prev_steer_agents[i],
                     just_overtook=just_overtook_current,
@@ -391,6 +405,9 @@ def main():
                     collision_sensors=collision_sensors,
                     blueprint_library=blueprint_library
                 )
+
+                # Applica la velocità di partenza a 40 km/h per il nuovo episodio
+                apply_initial_velocity(vehicles, speed_kmh=40.0)
 
                 # Riavvia le variabili di stato post-reset
                 states = []

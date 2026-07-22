@@ -9,7 +9,8 @@ TRUE_START_INDEX = 2505 # Indice del waypoint di partenza reale (per il tracciat
 # Configurazione fisica e limiti
 MAX_VELOCITY = 70.00  # Velocità massima di riferimento (m/s) per la normalizzazione (~252 km/h). Velocità massima raggiungibile da una tesla model 3 su CARLA: 71.58 m/s (257.7 km/h)
 MAX_VELOCITY_KMH = MAX_VELOCITY * 3.6  # Velocità massima in km/h
-STILL_THRESHOLD_STEPS = 100  # Numero di step consecutivi a velocità quasi nulla prima del reset per "still", 100 X 0.05 = 5 secondi
+STILL_THRESHOLD_STEPS = 300  # Numero di step consecutivi a velocità quasi nulla prima del reset per "still", 300 X 0.05 = 15 secondi
+MAX_STEPS_PER_EPISODE = 2000  # Limite massimo di step prima del reset forzato dell'ambiente
 COOLDOWN_OVERTAKE_STEPS = 100  # Numero di step di cooldown dopo un sorpasso prima di poter effettuare un nuovo sorpasso (100 X 0.05 = 5 secondi)
 OVERTAKE_THRESHOLD_METERS = 5.5 # Distanza minima tra due agenti per considerare un sorpasso valido (in metri).
 
@@ -44,17 +45,17 @@ ACTION_DIM = 2          # Sterzo, Acceleratore/Freno
 GLOBAL_STATE_DIM = STATE_DIM * NUM_AGENTS  # Stato globale per il Critic centralizzato
 
 # Iperparametri MAPPO
-ROLLOUT_STEPS = 128     # Quanti step accumulare nel buffer prima di aggiornare le reti
+ROLLOUT_STEPS = 512     # Quanti step accumulare nel buffer prima di aggiornare le reti
 LR_ACTOR = 3e-4         # Learning rate dell'Actor
-LR_CRITIC = 1e-3        # Learning rate del Critic
+LR_CRITIC = 3e-4        # Learning rate del Critic
 GAMMA = 0.99            # Fattore di sconto temporale
 LAMBDA = 0.95           # Parametro GAE (Generalized Advantage Estimation)
 CLIP_EPS = 0.2          # Parametro di clipping per PPO
-K_EPOCHS = 1            # Numero di epoche di ottimizzazione per aggiornamento
+K_EPOCHS = 5            # Numero di epoche di ottimizzazione per aggiornamento
 
 # Pesi Reward
-W_PROGRESS = 250.0 # Peso del progresso lungo la pista
-W_SPEED = 0.5 # Peso della velocità
-W_DIRECTION = 5.0 # Peso della direzione (angolo di sterzo)
-W_COLLISION = 100.0 # Peso della collisione
+W_PROGRESS = 20.0 # Peso del progresso lungo la pista
+W_SPEED = 1.0 # Peso della velocità
+W_DIRECTION = 1.5 # Peso della direzione (angolo di sterzo)
+W_COLLISION = 10.0 # Peso della collisione
 W_COMPETITION = 1.0 # Peso della competizione

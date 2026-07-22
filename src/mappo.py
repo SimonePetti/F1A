@@ -18,7 +18,7 @@ class MAPPO:
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
 
     def update(self, buffer, next_global_state, device):
-        """Esegue l'aggiornamento delle reti neurali."""
+        """Esegue l'aggiornamento delle reti neurali con Shuffle e Mini-Batch."""
         self.actor.train()
         self.critic.train()
 
@@ -37,22 +37,20 @@ class MAPPO:
         # 2. Bootstrap con l'ultimo stato globale tramite il Critic
         with torch.no_grad():
             next_global_state_tensor = torch.from_numpy(next_global_state).float().to(device).unsqueeze(0)
-            next_value = self.critic(next_global_state_tensor).detach()
+            next_value = self.critic(next_global_state_tensor).detach().squeeze(0)
 
         # 3. Calcolo GAE e Returns blindato contro il trajectory bleeding
-        values_extended = torch.cat([values, next_value], dim=0)
+        values_extended = torch.cat([values, next_value.unsqueeze(0)], dim=0)
         advantages = torch.zeros(T, num_agents, device=device)
         gae = torch.zeros(num_agents, device=device)
 
         with torch.no_grad():
             # Converte dones in un tensore float sul device corretto una volta sola prima del ciclo
             dones_device = dones.float().to(device)
-
             for t in reversed(range(T)):
-                # Flag non_terminal: 0.0 se l'episodio è finito (done=True), 1.0 altrimenti
+                # Flag non_terminal: 0.0 se l'episodio è finito (c'è stata una collisione), 1.0 altrimenti ("still" e "max_step" sono considerati non terminali)
                 non_terminal = 1.0 - dones_device[t] # Operazione nativa tra tensori dello stesso device
                 val_next = values_extended[t+1]
-
                 # Delta di Bellman con protezione crash
                 delta = rewards[t] + self.gamma * val_next * non_terminal - values_extended[t]
                 gae = delta + self.gamma * self.lmbda * gae * non_terminal
@@ -65,52 +63,71 @@ class MAPPO:
             if advantages[:, a].std() > 0:
                 advantages[:, a] = (advantages[:, a] - advantages[:, a].mean()) / (advantages[:, a].std() + 1e-8)
 
-        # Spatelliamo le dimensioni per l'Actor
-        states_flat = states.reshape(-1, buffer.state_dim)
-        actions_flat = actions.reshape(-1, buffer.action_dim)
-        old_log_probs_flat = old_log_probs.reshape(-1)
-        advantages_flat = advantages.reshape(-1)
-
+        # Configurazione dei Mini-Batch
+        batch_size = 32  # Dimensione ottimale per spezzare i 128 step stabili
         last_actor_loss, last_critic_loss = 0.0, 0.0
 
-        # 4. Ciclo di ottimizzazione per k_epochs
+        # 4. Ciclo di ottimizzazione sulle Epoche (K_EPOCHS)
         for _ in range(self.k_epochs):
-            # --- Aggiornamento Actor ---
-            mean, std = self.actor(states_flat)
-            dist = Normal(mean, std)
+            permutation = torch.randperm(T, device=device)
 
-            # Trasformazione log_prob per azioni continue limitate con atanh
-            actions_clamped = torch.clamp(actions_flat, -0.999, 0.999)
-            u = torch.atanh(actions_clamped)
+            for start_idx in range(0, T, batch_size):
+                batch_indices = permutation[start_idx : start_idx + batch_size]
 
-            log_prob_u = dist.log_prob(u)
-            log_prob = log_prob_u - torch.log(1 - actions_clamped.pow(2) + 1e-6)
-            new_log_probs_flat = log_prob.sum(dim=1)
+                # Estrazione del mini-batch sincronizzato per gli indici temporali estratti
+                b_states = states[batch_indices]
+                b_global_states = global_states[batch_indices]
+                b_actions = actions[batch_indices]
+                b_old_log_probs = old_log_probs[batch_indices]
+                b_advantages = advantages[batch_indices]
+                b_returns = returns[batch_indices]
 
-            ratio = torch.exp(new_log_probs_flat - old_log_probs_flat)
+                # L'Actor tratta le osservazioni di ogni agente in modo indipendente
+                b_states_flat = b_states.reshape(-1, buffer.state_dim)
+                b_actions_flat = b_actions.reshape(-1, buffer.action_dim)
+                b_old_log_probs_flat = b_old_log_probs.reshape(-1)
+                b_advantages_flat = b_advantages.reshape(-1)
 
-            surr1 = ratio * advantages_flat
-            surr2 = torch.clamp(ratio, 1.0 - self.eps_clip, 1.0 + self.eps_clip) * advantages_flat
+                # Aggiornamento Actor Centralizzato
+                mean, std = self.actor(b_states_flat)
+                dist = Normal(mean, std)
 
-            entropy = dist.entropy().sum(dim=1).mean()
-            actor_loss = -torch.min(surr1, surr2).mean() - 0.01 * entropy
+                # Trasformazione log_prob per azioni continue limitate via atanh
+                actions_clamped = torch.clamp(b_actions_flat, -0.999, 0.999)
+                u = torch.atanh(actions_clamped)
 
-            self.actor_optimizer.zero_grad()
-            actor_loss.backward()
-            nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
-            self.actor_optimizer.step()
+                log_prob_u = dist.log_prob(u)
+                log_prob = log_prob_u - torch.log(1 - actions_clamped.pow(2) + 1e-6)
+                new_log_probs_flat = log_prob.sum(dim=1) # [B*2]
 
-            # --- Aggiornamento Critic ---
-            critic_values = self.critic(global_states)
-            critic_loss = F.mse_loss(critic_values, returns.detach())
+                ratio = torch.exp(new_log_probs_flat - b_old_log_probs_flat)
 
-            self.critic_optimizer.zero_grad()
-            critic_loss.backward()
-            nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
-            self.critic_optimizer.step()
+                surr1 = ratio * b_advantages_flat
+                surr2 = torch.clamp(ratio, 1.0 - self.eps_clip, 1.0 + self.eps_clip) * b_advantages_flat
 
-            last_actor_loss = actor_loss.item()
-            last_critic_loss = critic_loss.item()
+                entropy = dist.entropy().sum(dim=1).mean()
+                actor_loss = -torch.min(surr1, surr2).mean() - 0.01 * entropy
+
+                self.actor_optimizer.zero_grad()
+                actor_loss.backward()
+                nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+                self.actor_optimizer.step()
+
+                # Il Critic riceve lo stato globale del mini-batch e calcola i valori stimati
+                critic_values = self.critic(b_global_states)
+
+                critic_values_flat = critic_values.view(-1)
+                b_returns_flat = b_returns.detach().view(-1)
+
+                critic_loss = F.mse_loss(critic_values_flat, b_returns_flat)
+
+                self.critic_optimizer.zero_grad()
+                critic_loss.backward()
+                nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
+                self.critic_optimizer.step()
+
+                last_actor_loss = actor_loss.item()
+                last_critic_loss = critic_loss.item()
 
         # Logging delle metriche
         print(f"📉 Critic loss: {last_critic_loss:.4f} | Actor loss: {last_actor_loss:.4f} | Mean reward: {rewards.mean().item():.4f}")
