@@ -43,6 +43,7 @@ F1A/
 ├── src/
 │   ├── __init__.py
 │   ├── buffer.py          # Accumulo delle transazioni locali e globali per l'addestramento
+│   ├── camera.py          # Gestione dello spectator live e registrazione video telemetrico
 │   ├── connection.py      # Gestione della connessione sincrona con il server CARLA
 │   ├── environment.py     # Gestione fisica dell'ambiente, spawning e raycasting geometrico
 │   ├── logger.py          # Salvataggio e monitoraggio delle metriche di addestramento su CSV

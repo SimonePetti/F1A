@@ -1,32 +1,29 @@
+import glob
 import sys
 import os
 import torch
 import numpy as np
+import gc
 
-# --- Caricamento dinamico CARLA Egg ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_monza = None
-while True:
-    if os.path.basename(current_dir) == "Monza":
-        root_monza = current_dir
-        break
-    parent = os.path.dirname(current_dir)
-    if parent == current_dir:
-        break
-    current_dir = parent
+# --- Setup Python 3.7 & EGG CARLA ---
+# Trova la cartella radice del progetto (F1A/)
+src_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(src_dir, ".."))
 
-if root_monza:
-    EGG_PATH = os.path.join(root_monza, "PythonAPI", "carla", "dist", "carla-0.9.12-py3.7-win-amd64.egg")
-    if os.path.exists(EGG_PATH):
-        sys.path.insert(0, EGG_PATH)
-        print(f"📦 File CARLA .egg caricato da: {EGG_PATH}")
-    else:
-        print(f"⚠️ Attenzione: File .egg non trovato in {EGG_PATH}")
+# Aggiungi la radice del progetto al PYTHONPATH per consentire gli import di config e src
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-f1a_root = os.path.dirname(os.path.abspath(__file__)) if os.path.basename(os.path.dirname(os.path.abspath(__file__))) == "F1A" else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(f1a_root)
+# Cerca e carica il file .egg di CARLA dalla radice del progetto (F1A/*.egg)
+egg_files = glob.glob(os.path.join(project_root, "*.egg"))
 
-# Controlla se la versione principale è 3 e la secondaria è 7s
+if egg_files:
+    sys.path.insert(0, egg_files[0])
+    print(f"📦 File CARLA .egg caricato da: {egg_files[0]}")
+else:
+    print(f"⚠️ ATTENZIONE: Nessun file .egg trovato nella radice ({project_root})")
+
+# Controlla se la versione principale è 3 e la secondaria è 7
 if sys.version_info.major != 3 or sys.version_info.minor != 7:
     sys.exit(f"❌ Errore: Questo script richiede rigorosamente Python 3.7 per caricare l'.egg di CARLA 0.9.12.\n"
             f"Attualmente stai usando Python {sys.version_info.major}.{sys.version_info.minor}.\n")
@@ -42,6 +39,7 @@ from src.buffer import RolloutBuffer
 from src.mappo import MAPPO
 from src.reward import RewardFunction
 from src.logger import TrainingLogger
+from src.camera import CameraManager
 
 def apply_initial_velocity(vehicles, speed_kmh=50.0):
     """ Impone una velocità iniziale immediata lungo la direzione del veicolo per sbloccare l'esplorazione """
@@ -116,6 +114,9 @@ def main():
     # Istanza del Logger strutturato
     logger = TrainingLogger()
 
+    # Inizializzazione del Gestore Telecamere
+    camera_manager = CameraManager(world)
+
     print(f"🏁 Avvio ciclo di addestramento MAPPO...")
 
     prev_closest_idx = [None] * NUM_AGENTS # Variabile per salvare l'ultimo indice di waypoint registrato per ciascun agente
@@ -131,6 +132,15 @@ def main():
     episode_p_losses = [] # Accumulatore per calcolare la media delle loss per l'Actor sull'intero episodio (per logging)
     episode_v_losses = [] # Accumulatore per calcolare la media delle loss per il Critic sull'intero episodio (per logging)
     still_counter = [0] * NUM_AGENTS # Usato per rilevare se gli agenti sono fermi (o troppo lenti) per troppo tempo (per evitare stalli)
+
+    # Recuperiamo le costanti spaziali del primo waypoint per posizionare lo spectator
+    wp_zero = waypoint_locations[0]
+
+    # Calcoliamo lo yaw iniziale basandoci sul vettore tra i primi due waypoint
+    yaw_deg = float(np.degrees(np.arctan2(waypoint_locations[1][1] - wp_zero[1], waypoint_locations[1][0] - wp_zero[0])))
+
+    # Avvia la telecamera per il primo episodio
+    camera_manager.start_episode(episode_id, yaw_deg, wp_zero, colore_0="Rosso", colore_1="Turchese")
 
     try:
         # Recupero lo stato iniziale per tutti gli agenti dopo il reset di avvio
@@ -378,6 +388,18 @@ def main():
                 (meters_agent_1 / TRACK_LENGTH_METERS) * 100.0
             ]
 
+            camera_manager.update_camera_positions(
+                vehicles=vehicles,
+                statistical_leader=statistical_leader,
+                speed_0=speed_kmh_0,
+                speed_1=speed_kmh_1,
+                distance=distance_between_agents,
+                reward_0=episode_cumulative_rewards[0],
+                reward_1=episode_cumulative_rewards[1],
+                laps_0=laps_completed[0],
+                laps_1=laps_completed[1]
+            )
+
             # Inviamo i dati allo step recorder
             logger.record_step(
                 speeds=[speed_kmh_0, speed_kmh_1],
@@ -428,6 +450,9 @@ def main():
             if done_episode:
                 print(f"🚨 Episodio finito. Step episodio: {episode_step}. Motivo: {reset_reason}")
 
+                # Chiude e salva il video
+                camera_manager.end_episode()
+
                 # Se abbiamo accumulato abbastanza dati totali, facciamo l'update e prendiamo i dati di perdita
                 if len(buffer) >= ROLLOUT_STEPS:
                     print(f"🎯 Rollout completo ({len(buffer)} step). Ottimizzazione MAPPO...")
@@ -459,6 +484,17 @@ def main():
 
                 # Applica la velocità di partenza a 40 km/h per il nuovo episodio
                 apply_initial_velocity(vehicles, speed_kmh=40.0)
+
+                # Fai fare un tick a vuoto a CARLA per stabilizzare i sensori
+                world.tick()
+
+                # Pulizia della memoria per evitare memory leak
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                # Avvia la telecamera per il nuovo episodio
+                camera_manager.start_episode(episode_id, yaw_deg, wp_zero, colore_0="Rosso", colore_1="Turchese")
 
                 # Riavvia le variabili di stato post-reset
                 states = []
@@ -505,12 +541,15 @@ def main():
         except:
             pass
 
-        # 2. Distruggiamo i sensori
+        # 2. Chiudiamo la telecamera
+        camera_manager.end_episode()
+
+        # 3. Distruggiamo i sensori
         for sensor in collision_sensors:
             try: sensor.destroy()
             except: pass
 
-        # 3. Distruggiamo i veicoli
+        # 4. Distruggiamo i veicoli
         for vehicle in vehicles:
             try: vehicle.destroy()
             except: pass

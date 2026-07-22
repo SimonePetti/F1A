@@ -60,3 +60,9 @@ W_SPEED = 1.0 # Peso della velocità
 W_DIRECTION = 1.5 # Peso della direzione (angolo di sterzo)
 W_COLLISION = 10.0 # Peso della collisione
 W_COMPETITION = 1.0 # Peso della competizione
+
+# Parametri per la cattura video
+VIDEO_FPS = 20
+FRAME_W = 800
+FRAME_H = 600
+SOGLIA_STEP_SALVATAGGIO = 100  # Salva solo se l'episodio è lungo almeno SOGLIA_STEP_SALVATAGGIO step
