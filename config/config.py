@@ -65,4 +65,4 @@ W_COMPETITION = 1.0 # Peso della competizione
 VIDEO_FPS = 20
 FRAME_W = 800
 FRAME_H = 600
-SOGLIA_STEP_SALVATAGGIO = 100  # Salva solo se l'episodio è lungo almeno SOGLIA_STEP_SALVATAGGIO step
+SOGLIA_STEP_SALVATAGGIO = 2000  # Salva solo se l'episodio è lungo almeno SOGLIA_STEP_SALVATAGGIO step

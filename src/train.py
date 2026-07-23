@@ -12,16 +12,16 @@ project_root = os.path.abspath(os.path.join(src_dir, ".."))
 
 # Aggiungi la radice del progetto al PYTHONPATH per consentire gli import di config e src
 if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+  sys.path.insert(0, project_root)
 
 # Cerca e carica il file .egg di CARLA dalla radice del progetto (F1A/*.egg)
 egg_files = glob.glob(os.path.join(project_root, "*.egg"))
 
 if egg_files:
-    sys.path.insert(0, egg_files[0])
-    print(f"📦 File CARLA .egg caricato da: {egg_files[0]}")
+  sys.path.insert(0, egg_files[0])
+  print(f"📦 File CARLA .egg caricato da: {egg_files[0]}")
 else:
-    print(f"⚠️ ATTENZIONE: Nessun file .egg trovato nella radice ({project_root})")
+  print(f"⚠️ ATTENZIONE: Nessun file .egg trovato nella radice ({project_root})")
 
 # Controlla se la versione principale è 3 e la secondaria è 7
 if sys.version_info.major != 3 or sys.version_info.minor != 7:
@@ -151,7 +151,7 @@ def main():
         global_state = states.flatten()
 
         prev_leader = None
-        last_overtake_step = -COOLDOWN_OVERTAKE_STEPS
+        last_overtake_step = -COOLDOWN_OVERTAKE_STEPS # Permette al primo sorpasso della gara di essere subito valido
         overtakes_0 = 0
         overtakes_1 = 0
         steps_leading_0 = 0
@@ -219,7 +219,7 @@ def main():
             locations = [t.location for t in transforms]
             rotations = [t.rotation for t in transforms]
 
-            MIN_VALID_LAP_TIME_S = 40.0
+            MIN_VALID_LAP_TIME_S = 30.0
 
             # 5. Progresso e giri completati per ciascun agente
             for i, vehicle in enumerate(vehicles):
