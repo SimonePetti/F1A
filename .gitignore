@@ -3,8 +3,6 @@ __pycache__/
 .vscode/
 .venv/
 Monza.npz
-*.pth
-training_log.csv
 pth-history/
 video_addestramento/
 carla-0.9.12-py3.7-win-amd64.egg
